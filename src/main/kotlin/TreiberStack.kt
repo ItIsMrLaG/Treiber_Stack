@@ -1,112 +1,54 @@
+import kotlinx.atomicfu.*
 import java.lang.RuntimeException
-import java.lang.System.currentTimeMillis
-import java.util.concurrent.atomic.AtomicReference
+import java.util.*
+import kotlin.math.absoluteValue
 
 class TreiberStack<T>(
     private val arrSize: Int,
-    private val pushSleepMs: Int,
     private val maxAttempts: Int,
-    private val popFromStackAttemptsMax: Int,
 ) {
 
-    private enum class States {
-
-        EMPTY, WIP, WAIT
-    }
-
-    private class Node<T>(val value: T?, val next: Node<T>?)
-    private class Exchanger<T> {
-
-        private val state = AtomicReference(States.EMPTY)
-        var value: T? = null
-
-        fun tryUpdateState(oldState: States, newState: States): Boolean {
-            return state.compareAndSet(oldState, newState)
-        }
-
-        fun updateState(oldState: States, newState: States) {
-            if (!tryUpdateState(
-                    oldState,
-                    newState
-                )
-            ) throw RuntimeException("Unexpected status change")
-        }
-
-        fun removeNode(): Node<T>? {
-            this.value = null
-            return this.value
-        }
-
-        fun updateNode(new: T) {
-            this.value = new
-        }
-    }
+    private class Node<T>(val value: T, val next: Node<T>?)
 
     /*   ***************** Fields *****************    */
 
-    private val h = AtomicReference<Node<T>?>(null)
+    private val h = atomic<Node<T>?>(null)
 
-    private val eliminationArray: Array<Exchanger<T>>
+    private val eliminationArray: AtomicArray<T?>
 
+    private val random = Random()
 
     /*   ***************** Internal *****************    */
 
     init {
         if (arrSize < 2) throw RuntimeException("Array size must be greater then 2 or equal 2")
-        eliminationArray = Array(size = arrSize) { Exchanger() }
+        eliminationArray = atomicArrayOfNulls(size = arrSize)
     }
 
-    private fun getInd(right: Int) = (0..<right).random()
-
-    private fun sleep(delta: Int) {
-        val end = currentTimeMillis() + delta
-        while (currentTimeMillis() < end) continue
-        return
-    }
+    private fun getInd(right: Int) = (random.nextInt() % right).absoluteValue
 
     /*   ***************** GET *****************    */
 
-    fun read(): T? = h.get()?.value
+    fun top(): T? = h.value?.value
 
     /*   ***************** PUSH *****************    */
 
     private fun tryPush(value: T): Boolean {
-        val head = h.get()
+        val head = h.value
         val node = Node(value, head)
         return h.compareAndSet(head, node)
     }
 
     private fun tryPushEliminate(value: T): Boolean {
-
-        fun initExchanger(exc: Exchanger<T>) {
-            exc.value = value
-            exc.updateState(
-                States.WIP,
-                States.WAIT
-            )
-        }
-
-        fun freeExchanger(exc: Exchanger<T>): Boolean {
-            if (exc.tryUpdateState(States.WAIT, States.WIP)) {
-                exc.value = null
-                exc.updateState(
-                    States.WIP,
-                    States.EMPTY
-                )
-                return false
-            }
-            return true
-        }
-
         var attempts = 0
 
         while (attempts != maxAttempts) {
             val exc = eliminationArray[getInd(arrSize)]
 
-            if (exc.tryUpdateState(States.EMPTY, States.WIP)) {
-                initExchanger(exc)
-                sleep(pushSleepMs)
-                return freeExchanger(exc)
+            if (exc.compareAndSet(null, value)) {
+                for (i in 0..10000) {
+                }
+                return !exc.compareAndSet(value, null)
             }
             attempts++
         }
@@ -123,32 +65,22 @@ class TreiberStack<T>(
     /*   ***************** POP *****************    */
 
     private fun tryPop(): Pair<Node<T>?, Boolean> {
-        val head = h.get()
+        val head = h.value
         if (h.compareAndSet(head, head?.next)) {
             return Pair(head, true)
         }
         return Pair(null, false)
     }
 
-    private fun tryPopEliminate(): Node<T>? {
-
-        fun eliminateOperation(exc: Exchanger<T>): T? {
-            val res = exc.value
-            exc.value = null
-            exc.updateState(
-                States.WIP,
-                States.EMPTY
-            )
-            return res
-        }
-
+    private fun tryPopEliminate(): T? {
         var attempts = 0
 
         while (attempts != maxAttempts) {
             val exc = eliminationArray[getInd(arrSize)]
+            val value = exc.value
 
-            if (exc.tryUpdateState(States.WAIT, States.WIP)) {
-                return Node(eliminateOperation(exc), null)
+            if (value != null && exc.compareAndSet(value, null)) {
+                return value
             }
 
             attempts++
@@ -157,8 +89,6 @@ class TreiberStack<T>(
     }
 
     fun pop(): T? {
-        var counter = 0
-
         while (true) {
             val (node, casRes) = tryPop()
 
@@ -166,14 +96,12 @@ class TreiberStack<T>(
                 node?.let {
                     return it.value
                 }
-                if (counter == popFromStackAttemptsMax) throw RuntimeException("Trying to remove an element from an empty stack")
 
-                counter++
-                sleep(pushSleepMs)
+                return null
             }
 
             tryPopEliminate()?.let {
-                return it.value
+                return it
             }
         }
     }
