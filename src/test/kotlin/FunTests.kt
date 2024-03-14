@@ -6,7 +6,8 @@ import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelChecki
 
 @Suppress("UNUSED")
 class BasicCounterTest {
-    private val c = TreiberStack<Int>(arrSize=6, maxAttempts=2)
+
+    private val c = TreiberStack<Int>(arrSize = 6, maxAttempts = 3)
 
     @Operation
     fun push(value: Int) = c.push(value)
@@ -24,21 +25,20 @@ class BasicCounterTest {
             .invocationsPerIteration(50_000)
             .threads(3)
             .actorsPerThread(3)
-//            .sequentialSpecification(SequentialIntStack::class.java)
+            .sequentialSpecification(SequentialStackInt::class.java)
             .logLevel(LoggingLevel.INFO)
             .check(this::class)
 
 
-     @Test
+    @Test
     fun modelTest() =
         ModelCheckingOptions()
             .iterations(50)
             .invocationsPerIteration(30_000)
             .threads(3)
             .actorsPerThread(3)
-//            .sequentialSpecification(SequentialIntStack::class.java)
+            .sequentialSpecification(SequentialStackInt::class.java)
             .checkObstructionFreedom()
             .logLevel(LoggingLevel.INFO)
             .check(this::class)
 }
-

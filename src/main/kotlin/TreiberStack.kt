@@ -6,9 +6,7 @@ import kotlin.math.absoluteValue
 class TreiberStack<T>(
     private val arrSize: Int,
     private val maxAttempts: Int,
-) {
-
-    private class Node<T>(val value: T, val next: Node<T>?)
+) : Stack<T> {
 
     /*   ***************** Fields *****************    */
 
@@ -29,7 +27,7 @@ class TreiberStack<T>(
 
     /*   ***************** GET *****************    */
 
-    fun top(): T? = h.value?.value
+    override fun top(): T? = h.value?.value
 
     /*   ***************** PUSH *****************    */
 
@@ -46,8 +44,7 @@ class TreiberStack<T>(
             val exc = eliminationArray[getInd(arrSize)]
 
             if (exc.compareAndSet(null, value)) {
-                for (i in 0..10000) {
-                }
+                for (i in 0..10000){}
                 return !exc.compareAndSet(value, null)
             }
             attempts++
@@ -55,7 +52,7 @@ class TreiberStack<T>(
         return false
     }
 
-    fun push(value: T) {
+    override fun push(value: T) {
         while (true) {
             if (tryPush(value)) return
             if (tryPushEliminate(value)) return
@@ -88,7 +85,7 @@ class TreiberStack<T>(
         return null
     }
 
-    fun pop(): T? {
+    override fun pop(): T? {
         while (true) {
             val (node, casRes) = tryPop()
 
