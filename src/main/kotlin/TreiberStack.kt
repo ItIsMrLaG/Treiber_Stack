@@ -44,7 +44,8 @@ class TreiberStack<T>(
             val exc = eliminationArray[getInd(arrSize)]
 
             if (exc.compareAndSet(null, value)) {
-                for (i in 0..10000){}
+                for (i in 0..10000) {
+                }
                 return !exc.compareAndSet(value, null)
             }
             attempts++
