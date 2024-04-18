@@ -1,74 +1,63 @@
+import EliminationStack.TreiberStackElimination
 import kotlinx.coroutines.*
 import org.jetbrains.kotlinx.lincheck.annotations.*
 import org.jetbrains.kotlinx.lincheck.*
 import org.jetbrains.kotlinx.lincheck.strategy.stress.*
 import org.junit.jupiter.api.Test
-import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingOptions
+import kotlin.math.absoluteValue
+import kotlin.random.Random
 import kotlin.system.measureTimeMillis
 
-class StandCase(val threads: Int, val numPushOps: Int, val numPopOps: Int, val numTopOps: Int)
+class StandCase(val threads: Int, val numOps: Int)
 
 object Stand {
 
     @OptIn(ExperimentalCoroutinesApi::class, DelicateCoroutinesApi::class)
-    suspend fun runAndMeasureTime(threads: Int, action: suspend () -> Unit) = measureTimeMillis {
+    suspend fun runAndMeasureTime(threads: Int, action: suspend (Int) -> Unit) {
+        val jobs = mutableListOf<Job>()
         coroutineScope { // scope for coroutines
-            var threadName = 0
             repeat(threads) {
-                threadName += 1
-                launch(newSingleThreadContext(threadName.toString())) {
-                    action()
-                }
+                jobs.add(launch(newSingleThreadContext(it.toString())) {
+                    action(it)
+                })
             }
         }
+        jobs.joinAll()
     }
 
-    fun <T> runCase(stack: Stack<T>, cfg: StandCase, pushVal: T): Long {
+    fun <T> runCase(stack: Stack<T>, cfg: StandCase, pushVal: T, rand: Boolean = true): Long {
         fun op(idx: Int) = when (idx) {
             0 -> {
                 val t = stack.pop()
             }
 
-            1 -> {
-                stack.push(pushVal)
-            }
-
+            1 -> stack.push(pushVal)
             else -> {
                 val t = stack.top()
             }
         }
 
-        fun action() {
-            val localCfg = mutableListOf(cfg.numPopOps, cfg.numTopOps, cfg.numPushOps)
-            for (i in 0 until localCfg.sum()) {
-                val idx = (0..<3).random().let {
-                    if (localCfg[it] != 0) return@let it
-                    if (localCfg[(it + 1) % 3] != 0) return@let (it + 1)
-                    return@let (it + 2)
-                } % 3
-
-                op(idx)
-                localCfg[idx] -= 1
+        fun action(idx: Int) =
+            repeat(cfg.numOps) { i ->
+                if (rand)
+                    op((i + Random.nextInt().absoluteValue) % 3)
+                else op(idx % 2)
             }
-        }
 
-        var time = 0L
-        runBlocking {
-            withContext(Dispatchers.Default) {
-                time = runAndMeasureTime(100) {
-                    action()
+
+        return measureTimeMillis {
+            runBlocking {
+                withContext(Dispatchers.Default) {
+                    runAndMeasureTime(cfg.threads) { it -> action(it) }
                 }
             }
         }
-        return time
     }
 }
 
+class TreiberStackTest {
 
-@Suppress("UNUSED")
-class BasicCounterTest {
-
-    private val c = TreiberStack<Int>(arrSize = 4, maxAttempts = 3)
+    private val c = TreiberStack<Int>()
 
     @Operation
     fun push(value: Int) = c.push(value)
@@ -89,61 +78,71 @@ class BasicCounterTest {
             .sequentialSpecification(SequentialStackInt::class.java)
             .logLevel(LoggingLevel.INFO)
             .check(this::class)
+}
 
+@Suppress("UNUSED")
+class TreiberStackEliminationTest {
+
+    private val c = TreiberStackElimination<Int>(4)
+
+    @Operation
+    fun push(value: Int) = c.push(value)
+
+    @Operation
+    fun pop() = c.pop()
+
+    @Operation
+    fun top() = c.top()
 
     @Test
-    fun modelTest() =
-        ModelCheckingOptions()
+    fun stressTest() =
+        StressOptions()
             .iterations(50)
-            .invocationsPerIteration(30_000)
-            .threads(6)
+            .invocationsPerIteration(50_000)
+            .threads(3)
             .actorsPerThread(3)
             .sequentialSpecification(SequentialStackInt::class.java)
-            .checkObstructionFreedom()
             .logLevel(LoggingLevel.INFO)
-            .check(this::class)
+            .check(this::class.java)
+}
+
+class PerformanceTest {
 
     @Test
-    fun performanceTest() {
-        /*
-10^1000 | seq = 58 | mult = 44
-10^10000 | seq = 518 | mult = 363
-10^100000 | seq = 6324 | mult = 3021
-10^1000000 | seq = 66482 | mult = 33252
-        *
-        * */
-        var k = 10
-        for (p in 2..6) {
-            k *= 10
-            var R1 = 0L
-            var R2 = 0L
-            for (n in 1..10) {
-                val trieber = TreiberStack<Int>(arrSize = 8, maxAttempts = 3)
-                val sequ = SequentialStackInt()
-                val r1 = Stand.runCase(
-                    stack = trieber,
-                    StandCase(
-                        threads = 8,
-                        numPushOps = k,
-                        numPopOps = k,
-                        numTopOps = k
-                    ), 100
-                )
-                R1 = (R1 * (n - 1) + r1) / n
-                val r2 =
-                    Stand.runCase(
-                        stack = sequ,
-                        StandCase(
-                            threads = 1,
-                            numPushOps = 8 * k,
-                            numPopOps = 8 * k,
-                            numTopOps = 8 * k
-                        ), 100
-                    )
-                R2 = (R2 * (n - 1) + r2) / n
+    fun `performance 10^6 operations per thread`() {
+        val ops = 1_000_000
+        for (threadN in mutableListOf(1, 2, 4, 8, 16)) {
+            var elStackTime = 0L
+            var stackTime = 0L
+
+            repeat(10) { i ->
+                val n = i + 1
+                val elStack = TreiberStackElimination<Int>(8)
+                val stack = TreiberStack<Int>()
+                val standCase = StandCase(threadN, ops)
+
+                elStackTime = (elStackTime * (n - 1) + Stand.runCase(stack = elStack, standCase, 1)) / n
+                stackTime = (stackTime * (n - 1) + Stand.runCase(stack = stack, standCase, 1)) / n
             }
-            println("10^${k} | seq = ${R2} | mult = ${R1}")
+            println("N = $threadN | elStack = $elStackTime | stack = $stackTime")
         }
     }
 }
+
+
+/* рандомные
+N = 1 | elStack = 19 | stack = 16
+N = 2 | elStack = 40 | stack = 109
+N = 4 | elStack = 107 | stack = 336
+N = 8 | elStack = 327 | stack = 877
+N = 16 | elStack = 1166 | stack = 1791
+* */
+
+/* подготовленные
+N = 1 | elStack = 12 | stack = 10
+N = 2 | elStack = 28 | stack = 126
+N = 4 | elStack = 94 | stack = 469
+N = 8 | elStack = 321 | stack = 1212
+N = 16 | elStack = 1321 | stack = 2541
+* */
 
